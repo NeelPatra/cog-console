@@ -24,13 +24,90 @@ jobs:
         run: npm install
       - name: Install Tauri CLI
         run: npm install -g @tauri-apps/cli
+      
       - name: Initialize Android
         run: npm run tauri android init
-      - name: Build Android APK
-        # FIXED: We are using --debug here. This fixes the "--apk value" error.
+
+      # It creates the optimization file directly on the build server
+      - name: Inject Optimization (SDK 35 + Splits)
+        run: |
+          cat > src-tauri/gen/android/app/build.gradle.kts <<EOF
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("rust")
+          }
+          android {
+              namespace = "com.cog.console"
+              compileSdk = 35
+              defaultConfig {
+                  applicationId = "com.cog.console"
+                  minSdk = 24
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+                  }
+              }
+              splits {
+                  abi {
+                      isEnable = true
+                      reset()
+                      include("armeabi-v7a", "arm64-v8a")
+                      isUniversalApk = false
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_1_8
+                  targetCompatibility = JavaVersion.VERSION_1_8
+              }
+              kotlinOptions {
+                  jvmTarget = "1.8"
+              }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.10.1")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+              implementation("com.google.android.material:material:1.9.0")
+          }
+          EOF
+
+      - name: Build Android APKs
         run: npm run tauri android build -- --debug
-      - name: Upload APK
+
+      - name: Upload Android (Modern - arm64)
         uses: actions/upload-artifact@v4
         with:
-          name: CoG-Console-Android
-          path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+          name: CoG-Console-Modern-Android
+          path: src-tauri/gen/android/app/build/outputs/apk/arm64-v8a/debug/app-arm64-v8a-debug.apk
+
+      - name: Upload Android (Older - armv7)
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoG-Console-Older-Android
+          path: src-tauri/gen/android/app/build/outputs/apk/armeabi-v7a/debug/app-armeabi-v7a-debug.apk
+
+  build-windows:
+    permissions: write-all
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Dependencies
+        run: npm install
+      - name: Build Windows EXE
+        run: npm run tauri build
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoG-Console-Windows
+          path: src-tauri/target/release/bundle/nsis/*.exe
