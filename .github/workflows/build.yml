@@ -1,0 +1,35 @@
+name: Build CoG Console
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    permissions: write-all
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Dependencies
+        run: npm install
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli
+      - name: Initialize Android
+        run: npm run tauri android init
+      - name: Build Android APK
+        run: npm run tauri android build -- --apk
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoG-Console-Android
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
