@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # JOB 1: ANDROID (Fixed "Missing Script" Error)
   build-android:
     permissions: write-all
     runs-on: ubuntu-latest
@@ -26,40 +25,27 @@ jobs:
       - name: Install Tauri CLI
         run: npm install -g @tauri-apps/cli
       
-      # 1. Initialize Android Project
+      # 1. Initialize (Generates the project structure)
       - name: Initialize Android
         run: npm run tauri android init
 
-      # 2. Generate Keystore (For Release Mode)
+      # 2. Generate a Key (Required for Release Mode)
       - name: Generate Keystore
         run: |
           keytool -genkey -v -keystore src-tauri/gen/android/release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # 3. SURGICAL FIX (The Magic Step)
-      # This fixes BOTH the 'settings.gradle' crash and the 'build.gradle' configuration.
-      - name: Fix Android Config (Remove broken link & Update SDK)
+      # 3. The "Trojan Horse" Patch
+      # We inject our specific settings (Signing + Optimization) into the build file
+      # BEFORE the build starts. This ensures we get a small file without crashing.
+      - name: Configure Android Build
         run: |
           node -e "
             const fs = require('fs');
-            
-            // --- FIX 1: Prevent 'tauri.settings.gradle' Crash ---
-            // We simply remove the line that tries to import the missing file.
-            const settingsPath = 'src-tauri/gen/android/settings.gradle';
+            const path = 'src-tauri/gen/android/app/build.gradle.kts';
             try {
-              let settings = fs.readFileSync(settingsPath, 'utf8');
-              // Comment out the line importing tauri.settings.gradle
-              settings = settings.replace(/apply from: .*tauri\.settings\.gradle.*/g, '// line removed by build script');
-              fs.writeFileSync(settingsPath, settings);
-              console.log('Fixed settings.gradle!');
-            } catch (e) {
-              console.log('Warning: settings.gradle not found (might be ok).');
-            }
+              let content = fs.readFileSync(path, 'utf8');
 
-            // --- FIX 2: Configure Build (SDK 35 + Signing + Release) ---
-            const buildPath = 'src-tauri/gen/android/app/build.gradle.kts';
-            try {
-              let content = fs.readFileSync(buildPath, 'utf8');
-
+              // A. Define the Signing Config
               const signingBlock = \`
                   signingConfigs {
                       create(\"release\") {
@@ -71,8 +57,10 @@ jobs:
                   }
               \`;
 
+              // B. Inject Signing Config
               content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
 
+              // C. Configure Release Mode (Minify + Sign + Shrink)
               content = content.replace(
                   /release \{[\s\S]*?\}/,
                   \`release {
@@ -83,9 +71,10 @@ jobs:
                   }\`
               );
 
+              // D. Update SDK to 29 (Android 10)
               content = content.replace('minSdk = 24', 'minSdk = 29');
-              
-              // Add ARM64 Filter to reduce size
+
+              // E. STRICT FILTER: Keep only Modern 64-bit processors (Small Size)
               content = content.replace(
                   'versionName = \"1.0\"',
                   \`versionName = \"1.0\"
@@ -94,22 +83,20 @@ jobs:
                   }\`
               );
 
-              fs.writeFileSync(buildPath, content);
-              console.log('Fixed build.gradle.kts!');
-            } catch (e) {
-               console.error('Error fixing build.gradle.kts:', e);
-               process.exit(1); 
+              fs.writeFileSync(path, content);
+              console.log('Successfully patched build.gradle.kts');
+            } catch (error) {
+              console.error('Patch failed:', error);
+              process.exit(1);
             }
           "
 
-      # 4. Build Release APK
-      - name: Build Release APK
-        run: |
-          cd src-tauri/gen/android
-          chmod +x gradlew
-          ./gradlew assembleRelease
+      # 4. Build using the CLI (Fixes missing file errors)
+      # We pass '--apk --release' to force the small, signed version.
+      - name: Build Android APK
+        run: npm run tauri android build -- --apk --release
 
-      # 5. Upload Results
+      # 5. Upload the Result (Uses wildcard to always find the file)
       - name: Upload Ultra-Light Android APK
         uses: actions/upload-artifact@v4
         with:
