@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # JOB 1: ANDROID (Updated with "Surgical" Fix)
+  # JOB 1: ANDROID
   build-android:
     permissions: write-all
     runs-on: ubuntu-latest
@@ -26,25 +26,22 @@ jobs:
       - name: Install Tauri CLI
         run: npm install -g @tauri-apps/cli
       
+      # This step CREATES the 'gen' folder.
       - name: Initialize Android
         run: npm run tauri android init
 
-      # STEP 1: Generate a temporary Keystore for signing
       - name: Generate Keystore
         run: |
           keytool -genkey -v -keystore src-tauri/gen/android/release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # STEP 2: Surgical Edit (Safe Modification)
-      # We use a tiny Node script to edit the file instead of replacing it.
-      # This prevents the "rootDirRel" crash by keeping the original structure intact.
-      - name: Configure Android Build (SDK 35 + Release Sign)
+      # Configure the temporary 'gen' folder
+      - name: Configure Android Build
         run: |
           node -e "
             const fs = require('fs');
             const path = 'src-tauri/gen/android/app/build.gradle.kts';
             let content = fs.readFileSync(path, 'utf8');
 
-            // 1. Define the Signing Config Block
             const signingBlock = \`
                 signingConfigs {
                     create(\"release\") {
@@ -56,10 +53,8 @@ jobs:
                 }
             \`;
 
-            // 2. Inject Signing Config before 'buildTypes'
             content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
 
-            // 3. Configure Release Block (Enable Minify + Use Signing)
             content = content.replace(
                 /release \{[\s\S]*?\}/,
                 \`release {
@@ -70,10 +65,8 @@ jobs:
                 }\`
             );
 
-            // 4. Update SDK Version (24 -> 29)
             content = content.replace('minSdk = 24', 'minSdk = 29');
 
-            // 5. Add ARM64 Filter (Reduces Size)
             content = content.replace(
                 'versionName = \"1.0\"',
                 \`versionName = \"1.0\"
@@ -83,18 +76,21 @@ jobs:
             );
 
             fs.writeFileSync(path, content);
-            console.log('Build file successfully patched!');
           "
 
-      # STEP 3: Build Release (No --debug flag)
-      - name: Build Android APK
-        run: npm run tauri android build
+      # Build Release APK
+      - name: Build Release APK
+        run: |
+          cd src-tauri/gen/android
+          chmod +x gradlew
+          ./gradlew assembleRelease
 
+      # THE FIX: Look for ANY apk file using '**'
       - name: Upload Ultra-Light Android APK
         uses: actions/upload-artifact@v4
         with:
           name: CoG-Console-Android-Lite
-          path: src-tauri/gen/android/app/build/outputs/apk/release/*.apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
 
   # JOB 2: WINDOWS
   build-windows:
