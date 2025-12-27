@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
+  # JOB 1: ANDROID (Ultra-Light Config)
   build-android:
     permissions: write-all
     runs-on: ubuntu-latest
@@ -28,8 +29,13 @@ jobs:
       - name: Initialize Android
         run: npm run tauri android init
 
-      # It creates the optimization file directly on the build server
-      - name: Inject Optimization (SDK 35 + Splits)
+      # Generate a temporary signing key so we can build in RELEASE mode
+      - name: Generate Keystore
+        run: |
+          keytool -genkey -v -keystore src-tauri/gen/android/release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
+
+      # Inject Optimization: SDK 35, MinSDK 29, ARM64 Only, Release Signing
+      - name: Inject Optimization
         run: |
           cat > src-tauri/gen/android/app/build.gradle.kts <<EOF
           plugins {
@@ -42,25 +48,35 @@ jobs:
               compileSdk = 35
               defaultConfig {
                   applicationId = "com.cog.console"
-                  minSdk = 24
-                  targetSdk = 35
+                  minSdk = 29        // Android 10+
+                  targetSdk = 35     // Android 15
                   versionCode = 1
                   versionName = "1.0"
+                  
+                  // STRICT FILTER: Only allow Modern 64-bit Processors
+                  ndk {
+                      abiFilters += listOf("arm64-v8a")
+                  }
               }
+              
+              signingConfigs {
+                  create("release") {
+                      storeFile = file("../../release.keystore")
+                      storePassword = "password"
+                      keyAlias = "android"
+                      keyPassword = "password"
+                  }
+              }
+
               buildTypes {
                   release {
-                      isMinifyEnabled = false
+                      isMinifyEnabled = true   // Shrink Code
+                      isShrinkResources = true // Shrink Resources
+                      signingConfig = signingConfigs.getByName("release")
                       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
                   }
               }
-              splits {
-                  abi {
-                      isEnable = true
-                      reset()
-                      include("armeabi-v7a", "arm64-v8a")
-                      isUniversalApk = false
-                  }
-              }
+              
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_1_8
                   targetCompatibility = JavaVersion.VERSION_1_8
@@ -76,21 +92,17 @@ jobs:
           }
           EOF
 
-      - name: Build Android APKs
-        run: npm run tauri android build -- --debug
+      # Build Release (No --debug flag)
+      - name: Build Android APK
+        run: npm run tauri android build
 
-      - name: Upload Android (Modern - arm64)
+      - name: Upload Ultra-Light Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: CoG-Console-Modern-Android
-          path: src-tauri/gen/android/app/build/outputs/apk/arm64-v8a/debug/app-arm64-v8a-debug.apk
+          name: CoG-Console-Android-Lite
+          path: src-tauri/gen/android/app/build/outputs/apk/release/*.apk
 
-      - name: Upload Android (Older - armv7)
-        uses: actions/upload-artifact@v4
-        with:
-          name: CoG-Console-Older-Android
-          path: src-tauri/gen/android/app/build/outputs/apk/armeabi-v7a/debug/app-armeabi-v7a-debug.apk
-
+  # JOB 2: FOR WINDOWS
   build-windows:
     permissions: write-all
     runs-on: windows-latest
