@@ -36,7 +36,7 @@ jobs:
 
       # 3. The "Trojan Horse" Patch
       # We inject our specific settings (Signing + Optimization) into the build file
-      # BEFORE the build starts. This ensures we get a small file without crashing.
+      # BEFORE the build starts.
       - name: Configure Android Build
         run: |
           node -e "
@@ -91,12 +91,12 @@ jobs:
             }
           "
 
-      # 4. Build using the CLI (Fixes missing file errors)
-      # We pass '--apk --release' to force the small, signed version.
+      # 4. Build using the CLI (FIXED COMMAND)
+      # We removed '--release'. By simply omitting '--debug', it defaults to Release mode.
       - name: Build Android APK
-        run: npm run tauri android build -- --apk --release
+        run: npm run tauri android build -- --apk
 
-      # 5. Upload the Result (Uses wildcard to always find the file)
+      # 5. Upload the Result
       - name: Upload Ultra-Light Android APK
         uses: actions/upload-artifact@v4
         with:
