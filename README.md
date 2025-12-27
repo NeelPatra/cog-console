@@ -10,7 +10,7 @@
 
 ## 🚀 Features
 * **Zero-Maintenance Content:** The app acts as a live portal. Any new game uploaded to the website appears instantly in the app.
-* **Lightweight:** ~8MB on Windows, ~27MB on Android.
+* **Lightweight:** ~8MB on Windows, ~28MB on Android.
 * **Cross-Platform:** One codebase builds for both Windows and Android.
 * **Cloud Built:** The entire build process is automated via GitHub Actions—no local development environment required.
 
