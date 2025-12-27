@@ -28,12 +28,11 @@ jobs:
       - name: Initialize Android
         run: npm run tauri android init
 
-      # Create a temporary signing key so we can build a Release version
       - name: Generate Keystore
         run: |
           keytool -genkey -v -keystore release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # INJECT OPTIMIZATION: Forces the app to be small (~27MB) even in Debug mode
+      # INJECT OPTIMIZATION: Forces the app to be small (~10-15MB)
       - name: Inject Optimization Settings
         run: |
           node -e "
@@ -56,7 +55,6 @@ jobs:
               content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
 
               // 2. OPTIMIZE DEBUG BLOCK (The Hijack)
-              // We force 'isMinifyEnabled = true' to strip unused code.
               const optimizationSettings = \`
                   isMinifyEnabled = true
                   isShrinkResources = true
@@ -64,7 +62,6 @@ jobs:
                   proguardFiles(getDefaultProguardFile(\"proguard-android-optimize.txt\"), \"proguard-rules.pro\")
               \`;
               
-              // Apply to both Debug and Release to guarantee small size
               content = content.replace(
                   /debug \{[\s\S]*?\}/,
                   \`debug { \${optimizationSettings} }\`
@@ -94,14 +91,12 @@ jobs:
             }
           "
 
-      # Build Command
       - name: Build Android APK
         run: npm run tauri android build -- --apk true
 
-      # MANUAL SIGNING: Guarantees the APK installs on all phones
+      # SIGNING & RENAMING STEP
       - name: Sign APK Manually
         run: |
-          # 1. Find the APK recursively
           APK_PATH=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
           
           if [ -z "$APK_PATH" ]; then
@@ -111,22 +106,20 @@ jobs:
           
           echo "Found APK at: $APK_PATH"
           
-          # 2. Find build tools
           BUILD_TOOLS_PATH=$(ls -d $ANDROID_HOME/build-tools/* | sort -r | head -n 1)
           ZIPALIGN="$BUILD_TOOLS_PATH/zipalign"
           APKSIGNER="$BUILD_TOOLS_PATH/apksigner"
           
-          # 3. Optimize (Zipalign)
           $ZIPALIGN -v -p 4 "$APK_PATH" aligned.apk
           
-          # 4. Sign (The Digital Seal)
-          $APKSIGNER sign --ks release.keystore --ks-pass pass:password --out final-signed.apk aligned.apk
+          # Output directly to the clean name
+          $APKSIGNER sign --ks release.keystore --ks-pass pass:password --out CoG-Console-Android-Signed.apk aligned.apk
 
       - name: Upload Signed Android APK
         uses: actions/upload-artifact@v4
         with:
           name: CoG-Console-Android-Signed
-          path: final-signed.apk
+          path: CoG-Console-Android-Signed.apk
 
   build-windows:
     permissions: write-all
@@ -143,8 +136,15 @@ jobs:
         run: npm install
       - name: Build Windows EXE
         run: npm run tauri build
+
+      # NEW STEP: RENAME THE INSTALLER
+      - name: Rename Installer
+        run: |
+          cd src-tauri/target/release/bundle/nsis
+          Get-ChildItem *.exe | Rename-Item -NewName "CoG-Console-Windows.exe"
+
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v4
         with:
           name: CoG-Console-Windows
-          path: src-tauri/target/release/bundle/nsis/*.exe
+          path: src-tauri/target/release/bundle/nsis/CoG-Console-Windows.exe
