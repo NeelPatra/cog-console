@@ -32,7 +32,8 @@ jobs:
         run: |
           keytool -genkey -v -keystore release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # This step enables the Size Reduction (Arm64 only)
+      # FIXED: We now inject optimization settings into BOTH 'debug' and 'release' blocks.
+      # This guarantees a small file size even if the CLI defaults to Debug mode.
       - name: Inject Optimization Settings
         run: |
           node -e "
@@ -41,20 +42,42 @@ jobs:
             try {
               let content = fs.readFileSync(path, 'utf8');
 
-              // 1. Enable Minification (Shrinking)
+              // 1. Define Signing Config
+              const signingBlock = \`
+                  signingConfigs {
+                      create(\"release\") {
+                          storeFile = file(\\\"../../release.keystore\\\")
+                          storePassword = \\\"password\\\"
+                          keyAlias = \\\"android\\\"
+                          keyPassword = \\\"password\\\"
+                      }
+                  }
+              \`;
+              content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
+
+              // 2. OPTIMIZE DEBUG BLOCK (The Hijack)
+              // We force 'isMinifyEnabled = true' even for debug to get small size.
+              const optimizationSettings = \`
+                  isMinifyEnabled = true
+                  isShrinkResources = true
+                  signingConfig = signingConfigs.getByName(\"release\")
+                  proguardFiles(getDefaultProguardFile(\"proguard-android-optimize.txt\"), \"proguard-rules.pro\")
+              \`;
+              
               content = content.replace(
-                  /release \{[\s\S]*?\}/,
-                  \`release {
-                      isMinifyEnabled = true
-                      isShrinkResources = true
-                      proguardFiles(getDefaultProguardFile(\"proguard-android-optimize.txt\"), \"proguard-rules.pro\")
-                  }\`
+                  /debug \{[\s\S]*?\}/,
+                  \`debug { \${optimizationSettings} }\`
               );
 
-              // 2. Update SDK to 29 (Android 10)
+              content = content.replace(
+                  /release \{[\s\S]*?\}/,
+                  \`release { \${optimizationSettings} }\`
+              );
+
+              // 3. Update SDK to 29 (Android 10)
               content = content.replace('minSdk = 24', 'minSdk = 29');
 
-              // 3. STRICT FILTER: Keep only Modern 64-bit processors (Small Size)
+              // 4. STRICT FILTER: Keep only Modern 64-bit processors (Small Size)
               content = content.replace(
                   /versionName = \".*\"/,
                   \`versionName = \"1.0\"
@@ -71,18 +94,24 @@ jobs:
             }
           "
 
-      # FIXED COMMAND: Added 'true' to satisfy the strict builder
+      # Build Command (We accept the default Debug mode, but our hijack makes it small)
       - name: Build Android APK
         run: npm run tauri android build -- --apk true
 
-      # Manual Signing Step (Guarantees Installation)
+      # FIXED: Smarter Search + Manual Signing
       - name: Sign APK Manually
         run: |
-          # 1. Find the unsigned APK
-          APK_PATH=$(find src-tauri/gen/android/app/build/outputs/apk/release -name "*-unsigned.apk" | head -n 1)
+          # 1. Find the APK recursively (looks in debug OR release folders)
+          APK_PATH=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
+          
+          if [ -z "$APK_PATH" ]; then
+            echo "Error: No APK found!"
+            exit 1
+          fi
+          
           echo "Found APK at: $APK_PATH"
           
-          # 2. Find the build tools
+          # 2. Find build tools
           BUILD_TOOLS_PATH=$(ls -d $ANDROID_HOME/build-tools/* | sort -r | head -n 1)
           ZIPALIGN="$BUILD_TOOLS_PATH/zipalign"
           APKSIGNER="$BUILD_TOOLS_PATH/apksigner"
