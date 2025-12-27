@@ -25,17 +25,16 @@ jobs:
       - name: Install Tauri CLI
         run: npm install -g @tauri-apps/cli
       
-      # 1. Initialize Project
       - name: Initialize Android
         run: npm run tauri android init
 
-      # 2. Generate Release Key
       - name: Generate Keystore
         run: |
-          keytool -genkey -v -keystore src-tauri/gen/android/release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
+          keytool -genkey -v -keystore release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # 3. Inject Optimization Settings (Trojan Horse Method)
-      - name: Configure Android Build
+      # FIXED: Uses a smarter regex so it finds the version number correctly
+      # This enables the Size Reduction (Arm64 only)
+      - name: Inject Optimization Settings
         run: |
           node -e "
             const fs = require('fs');
@@ -43,34 +42,23 @@ jobs:
             try {
               let content = fs.readFileSync(path, 'utf8');
 
-              const signingBlock = \`
-                  signingConfigs {
-                      create(\"release\") {
-                          storeFile = file(\\\"../../release.keystore\\\")
-                          storePassword = \\\"password\\\"
-                          keyAlias = \\\"android\\\"
-                          keyPassword = \\\"password\\\"
-                      }
-                  }
-              \`;
-
-              content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
-
+              // 1. Enable Minification (Shrinking)
               content = content.replace(
                   /release \{[\s\S]*?\}/,
                   \`release {
                       isMinifyEnabled = true
                       isShrinkResources = true
-                      signingConfig = signingConfigs.getByName(\"release\")
                       proguardFiles(getDefaultProguardFile(\"proguard-android-optimize.txt\"), \"proguard-rules.pro\")
                   }\`
               );
 
+              // 2. Update SDK to 29 (Android 10)
               content = content.replace('minSdk = 24', 'minSdk = 29');
 
-              // ARM64 Only for smallest size
+              // 3. STRICT FILTER: Keep only Modern 64-bit processors (Small Size)
+              // We use a Regex to find 'versionName' regardless of what the number is.
               content = content.replace(
-                  'versionName = \"1.0\"',
+                  /versionName = \".*\"/,
                   \`versionName = \"1.0\"
                   ndk {
                       abiFilters += listOf(\"arm64-v8a\")
@@ -85,18 +73,33 @@ jobs:
             }
           "
 
-      # 4. Build Command (FIXED)
-      # We explicitly say 'true' for the apk flag.
-      # We do NOT include '--debug', so it defaults to Release mode.
+      # Build the APK (It will come out Unsigned, which is fine for now)
       - name: Build Android APK
-        run: npm run tauri android build -- --apk true
+        run: npm run tauri android build -- --apk
 
-      # 5. Upload Artifacts
-      - name: Upload Ultra-Light Android APK
+      # NEW: Manual Signing Step (Guarantees Installation)
+      - name: Sign APK Manually
+        run: |
+          # 1. Find the unsigned APK
+          APK_PATH=$(find src-tauri/gen/android/app/build/outputs/apk/release -name "*-unsigned.apk" | head -n 1)
+          echo "Found APK at: $APK_PATH"
+          
+          # 2. Find the build tools
+          BUILD_TOOLS_PATH=$(ls -d $ANDROID_HOME/build-tools/* | sort -r | head -n 1)
+          ZIPALIGN="$BUILD_TOOLS_PATH/zipalign"
+          APKSIGNER="$BUILD_TOOLS_PATH/apksigner"
+          
+          # 3. Optimize (Zipalign)
+          $ZIPALIGN -v -p 4 "$APK_PATH" aligned.apk
+          
+          # 4. Sign (The Digital Seal)
+          $APKSIGNER sign --ks release.keystore --ks-pass pass:password --out final-signed.apk aligned.apk
+
+      - name: Upload Signed Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: CoG-Console-Android-Lite
-          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          name: CoG-Console-Android-Signed
+          path: final-signed.apk
 
   build-windows:
     permissions: write-all
