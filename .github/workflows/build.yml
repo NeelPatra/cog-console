@@ -32,8 +32,7 @@ jobs:
         run: |
           keytool -genkey -v -keystore release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # FIXED: Uses a smarter regex so it finds the version number correctly
-      # This enables the Size Reduction (Arm64 only)
+      # This step enables the Size Reduction (Arm64 only)
       - name: Inject Optimization Settings
         run: |
           node -e "
@@ -56,7 +55,6 @@ jobs:
               content = content.replace('minSdk = 24', 'minSdk = 29');
 
               // 3. STRICT FILTER: Keep only Modern 64-bit processors (Small Size)
-              // We use a Regex to find 'versionName' regardless of what the number is.
               content = content.replace(
                   /versionName = \".*\"/,
                   \`versionName = \"1.0\"
@@ -73,11 +71,11 @@ jobs:
             }
           "
 
-      # Build the APK (It will come out Unsigned, which is fine for now)
+      # FIXED COMMAND: Added 'true' to satisfy the strict builder
       - name: Build Android APK
-        run: npm run tauri android build -- --apk
+        run: npm run tauri android build -- --apk true
 
-      # NEW: Manual Signing Step (Guarantees Installation)
+      # Manual Signing Step (Guarantees Installation)
       - name: Sign APK Manually
         run: |
           # 1. Find the unsigned APK
