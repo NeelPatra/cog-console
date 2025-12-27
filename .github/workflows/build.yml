@@ -25,18 +25,16 @@ jobs:
       - name: Install Tauri CLI
         run: npm install -g @tauri-apps/cli
       
-      # 1. Initialize (Generates the project structure)
+      # 1. Initialize Project
       - name: Initialize Android
         run: npm run tauri android init
 
-      # 2. Generate a Key (Required for Release Mode)
+      # 2. Generate Release Key
       - name: Generate Keystore
         run: |
           keytool -genkey -v -keystore src-tauri/gen/android/release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # 3. The "Trojan Horse" Patch
-      # We inject our specific settings (Signing + Optimization) into the build file
-      # BEFORE the build starts.
+      # 3. Inject Optimization Settings (Trojan Horse Method)
       - name: Configure Android Build
         run: |
           node -e "
@@ -45,7 +43,6 @@ jobs:
             try {
               let content = fs.readFileSync(path, 'utf8');
 
-              // A. Define the Signing Config
               const signingBlock = \`
                   signingConfigs {
                       create(\"release\") {
@@ -57,10 +54,8 @@ jobs:
                   }
               \`;
 
-              // B. Inject Signing Config
               content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
 
-              // C. Configure Release Mode (Minify + Sign + Shrink)
               content = content.replace(
                   /release \{[\s\S]*?\}/,
                   \`release {
@@ -71,10 +66,9 @@ jobs:
                   }\`
               );
 
-              // D. Update SDK to 29 (Android 10)
               content = content.replace('minSdk = 24', 'minSdk = 29');
 
-              // E. STRICT FILTER: Keep only Modern 64-bit processors (Small Size)
+              // ARM64 Only for smallest size
               content = content.replace(
                   'versionName = \"1.0\"',
                   \`versionName = \"1.0\"
@@ -91,19 +85,19 @@ jobs:
             }
           "
 
-      # 4. Build using the CLI (FIXED COMMAND)
-      # We removed '--release'. By simply omitting '--debug', it defaults to Release mode.
+      # 4. Build Command (FIXED)
+      # We explicitly say 'true' for the apk flag.
+      # We do NOT include '--debug', so it defaults to Release mode.
       - name: Build Android APK
-        run: npm run tauri android build -- --apk
+        run: npm run tauri android build -- --apk true
 
-      # 5. Upload the Result
+      # 5. Upload Artifacts
       - name: Upload Ultra-Light Android APK
         uses: actions/upload-artifact@v4
         with:
           name: CoG-Console-Android-Lite
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
 
-  # JOB 2: WINDOWS
   build-windows:
     permissions: write-all
     runs-on: windows-latest
