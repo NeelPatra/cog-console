@@ -28,12 +28,12 @@ jobs:
       - name: Initialize Android
         run: npm run tauri android init
 
+      # Create a temporary signing key so we can build a Release version
       - name: Generate Keystore
         run: |
           keytool -genkey -v -keystore release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # FIXED: We now inject optimization settings into BOTH 'debug' and 'release' blocks.
-      # This guarantees a small file size even if the CLI defaults to Debug mode.
+      # INJECT OPTIMIZATION: Forces the app to be small (~27MB) even in Debug mode
       - name: Inject Optimization Settings
         run: |
           node -e "
@@ -56,7 +56,7 @@ jobs:
               content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
 
               // 2. OPTIMIZE DEBUG BLOCK (The Hijack)
-              // We force 'isMinifyEnabled = true' even for debug to get small size.
+              // We force 'isMinifyEnabled = true' to strip unused code.
               const optimizationSettings = \`
                   isMinifyEnabled = true
                   isShrinkResources = true
@@ -64,20 +64,20 @@ jobs:
                   proguardFiles(getDefaultProguardFile(\"proguard-android-optimize.txt\"), \"proguard-rules.pro\")
               \`;
               
+              // Apply to both Debug and Release to guarantee small size
               content = content.replace(
                   /debug \{[\s\S]*?\}/,
                   \`debug { \${optimizationSettings} }\`
               );
-
               content = content.replace(
                   /release \{[\s\S]*?\}/,
                   \`release { \${optimizationSettings} }\`
               );
 
-              // 3. Update SDK to 29 (Android 10)
+              // 3. Update SDK to 29 (Android 10+)
               content = content.replace('minSdk = 24', 'minSdk = 29');
 
-              // 4. STRICT FILTER: Keep only Modern 64-bit processors (Small Size)
+              // 4. STRICT FILTER: Keep only Modern 64-bit processors
               content = content.replace(
                   /versionName = \".*\"/,
                   \`versionName = \"1.0\"
@@ -94,14 +94,14 @@ jobs:
             }
           "
 
-      # Build Command (We accept the default Debug mode, but our hijack makes it small)
+      # Build Command
       - name: Build Android APK
         run: npm run tauri android build -- --apk true
 
-      # FIXED: Smarter Search + Manual Signing
+      # MANUAL SIGNING: Guarantees the APK installs on all phones
       - name: Sign APK Manually
         run: |
-          # 1. Find the APK recursively (looks in debug OR release folders)
+          # 1. Find the APK recursively
           APK_PATH=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
           
           if [ -z "$APK_PATH" ]; then
