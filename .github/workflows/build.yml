@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # JOB 1: ANDROID (Ultra-Light Config)
+  # JOB 1: ANDROID (Updated with "Surgical" Fix)
   build-android:
     permissions: write-all
     runs-on: ubuntu-latest
@@ -29,70 +29,64 @@ jobs:
       - name: Initialize Android
         run: npm run tauri android init
 
-      # Generate a temporary signing key so we can build in RELEASE mode
+      # STEP 1: Generate a temporary Keystore for signing
       - name: Generate Keystore
         run: |
           keytool -genkey -v -keystore src-tauri/gen/android/release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # Inject Optimization: SDK 35, MinSDK 29, ARM64 Only, Release Signing
-      - name: Inject Optimization
+      # STEP 2: Surgical Edit (Safe Modification)
+      # We use a tiny Node script to edit the file instead of replacing it.
+      # This prevents the "rootDirRel" crash by keeping the original structure intact.
+      - name: Configure Android Build (SDK 35 + Release Sign)
         run: |
-          cat > src-tauri/gen/android/app/build.gradle.kts <<EOF
-          plugins {
-              id("com.android.application")
-              id("org.jetbrains.kotlin.android")
-              id("rust")
-          }
-          android {
-              namespace = "com.cog.console"
-              compileSdk = 35
-              defaultConfig {
-                  applicationId = "com.cog.console"
-                  minSdk = 29        // Android 10+
-                  targetSdk = 35     // Android 15
-                  versionCode = 1
-                  versionName = "1.0"
-                  
-                  // STRICT FILTER: Only allow Modern 64-bit Processors
-                  ndk {
-                      abiFilters += listOf("arm64-v8a")
-                  }
-              }
-              
-              signingConfigs {
-                  create("release") {
-                      storeFile = file("../../release.keystore")
-                      storePassword = "password"
-                      keyAlias = "android"
-                      keyPassword = "password"
-                  }
-              }
+          node -e "
+            const fs = require('fs');
+            const path = 'src-tauri/gen/android/app/build.gradle.kts';
+            let content = fs.readFileSync(path, 'utf8');
 
-              buildTypes {
-                  release {
-                      isMinifyEnabled = true   // Shrink Code
-                      isShrinkResources = true // Shrink Resources
-                      signingConfig = signingConfigs.getByName("release")
-                      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-                  }
-              }
-              
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_1_8
-                  targetCompatibility = JavaVersion.VERSION_1_8
-              }
-              kotlinOptions {
-                  jvmTarget = "1.8"
-              }
-          }
-          dependencies {
-              implementation("androidx.core:core-ktx:1.10.1")
-              implementation("androidx.appcompat:appcompat:1.6.1")
-              implementation("com.google.android.material:material:1.9.0")
-          }
-          EOF
+            // 1. Define the Signing Config Block
+            const signingBlock = \`
+                signingConfigs {
+                    create(\"release\") {
+                        storeFile = file(\\\"../../release.keystore\\\")
+                        storePassword = \\\"password\\\"
+                        keyAlias = \\\"android\\\"
+                        keyPassword = \\\"password\\\"
+                    }
+                }
+            \`;
 
-      # Build Release (No --debug flag)
+            // 2. Inject Signing Config before 'buildTypes'
+            content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
+
+            // 3. Configure Release Block (Enable Minify + Use Signing)
+            content = content.replace(
+                /release \{[\s\S]*?\}/,
+                \`release {
+                    isMinifyEnabled = true
+                    isShrinkResources = true
+                    signingConfig = signingConfigs.getByName(\"release\")
+                    proguardFiles(getDefaultProguardFile(\"proguard-android-optimize.txt\"), \"proguard-rules.pro\")
+                }\`
+            );
+
+            // 4. Update SDK Version (24 -> 29)
+            content = content.replace('minSdk = 24', 'minSdk = 29');
+
+            // 5. Add ARM64 Filter (Reduces Size)
+            content = content.replace(
+                'versionName = \"1.0\"',
+                \`versionName = \"1.0\"
+                ndk {
+                    abiFilters += listOf(\"arm64-v8a\")
+                }\`
+            );
+
+            fs.writeFileSync(path, content);
+            console.log('Build file successfully patched!');
+          "
+
+      # STEP 3: Build Release (No --debug flag)
       - name: Build Android APK
         run: npm run tauri android build
 
@@ -102,7 +96,7 @@ jobs:
           name: CoG-Console-Android-Lite
           path: src-tauri/gen/android/app/build/outputs/apk/release/*.apk
 
-  # JOB 2: FOR WINDOWS
+  # JOB 2: WINDOWS
   build-windows:
     permissions: write-all
     runs-on: windows-latest
