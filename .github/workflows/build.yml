@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # JOB 1: ANDROID
+  # JOB 1: ANDROID (Fixed "Missing Script" Error)
   build-android:
     permissions: write-all
     runs-on: ubuntu-latest
@@ -26,66 +26,90 @@ jobs:
       - name: Install Tauri CLI
         run: npm install -g @tauri-apps/cli
       
-      # This step CREATES the 'gen' folder.
+      # 1. Initialize Android Project
       - name: Initialize Android
         run: npm run tauri android init
 
+      # 2. Generate Keystore (For Release Mode)
       - name: Generate Keystore
         run: |
           keytool -genkey -v -keystore src-tauri/gen/android/release.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Android Debug,O=Android,C=US"
 
-      # Configure the temporary 'gen' folder
-      - name: Configure Android Build
+      # 3. SURGICAL FIX (The Magic Step)
+      # This fixes BOTH the 'settings.gradle' crash and the 'build.gradle' configuration.
+      - name: Fix Android Config (Remove broken link & Update SDK)
         run: |
           node -e "
             const fs = require('fs');
-            const path = 'src-tauri/gen/android/app/build.gradle.kts';
-            let content = fs.readFileSync(path, 'utf8');
+            
+            // --- FIX 1: Prevent 'tauri.settings.gradle' Crash ---
+            // We simply remove the line that tries to import the missing file.
+            const settingsPath = 'src-tauri/gen/android/settings.gradle';
+            try {
+              let settings = fs.readFileSync(settingsPath, 'utf8');
+              // Comment out the line importing tauri.settings.gradle
+              settings = settings.replace(/apply from: .*tauri\.settings\.gradle.*/g, '// line removed by build script');
+              fs.writeFileSync(settingsPath, settings);
+              console.log('Fixed settings.gradle!');
+            } catch (e) {
+              console.log('Warning: settings.gradle not found (might be ok).');
+            }
 
-            const signingBlock = \`
-                signingConfigs {
-                    create(\"release\") {
-                        storeFile = file(\\\"../../release.keystore\\\")
-                        storePassword = \\\"password\\\"
-                        keyAlias = \\\"android\\\"
-                        keyPassword = \\\"password\\\"
-                    }
-                }
-            \`;
+            // --- FIX 2: Configure Build (SDK 35 + Signing + Release) ---
+            const buildPath = 'src-tauri/gen/android/app/build.gradle.kts';
+            try {
+              let content = fs.readFileSync(buildPath, 'utf8');
 
-            content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
+              const signingBlock = \`
+                  signingConfigs {
+                      create(\"release\") {
+                          storeFile = file(\\\"../../release.keystore\\\")
+                          storePassword = \\\"password\\\"
+                          keyAlias = \\\"android\\\"
+                          keyPassword = \\\"password\\\"
+                      }
+                  }
+              \`;
 
-            content = content.replace(
-                /release \{[\s\S]*?\}/,
-                \`release {
-                    isMinifyEnabled = true
-                    isShrinkResources = true
-                    signingConfig = signingConfigs.getByName(\"release\")
-                    proguardFiles(getDefaultProguardFile(\"proguard-android-optimize.txt\"), \"proguard-rules.pro\")
-                }\`
-            );
+              content = content.replace('buildTypes {', signingBlock + '\\n    buildTypes {');
 
-            content = content.replace('minSdk = 24', 'minSdk = 29');
+              content = content.replace(
+                  /release \{[\s\S]*?\}/,
+                  \`release {
+                      isMinifyEnabled = true
+                      isShrinkResources = true
+                      signingConfig = signingConfigs.getByName(\"release\")
+                      proguardFiles(getDefaultProguardFile(\"proguard-android-optimize.txt\"), \"proguard-rules.pro\")
+                  }\`
+              );
 
-            content = content.replace(
-                'versionName = \"1.0\"',
-                \`versionName = \"1.0\"
-                ndk {
-                    abiFilters += listOf(\"arm64-v8a\")
-                }\`
-            );
+              content = content.replace('minSdk = 24', 'minSdk = 29');
+              
+              // Add ARM64 Filter to reduce size
+              content = content.replace(
+                  'versionName = \"1.0\"',
+                  \`versionName = \"1.0\"
+                  ndk {
+                      abiFilters += listOf(\"arm64-v8a\")
+                  }\`
+              );
 
-            fs.writeFileSync(path, content);
+              fs.writeFileSync(buildPath, content);
+              console.log('Fixed build.gradle.kts!');
+            } catch (e) {
+               console.error('Error fixing build.gradle.kts:', e);
+               process.exit(1); 
+            }
           "
 
-      # Build Release APK
+      # 4. Build Release APK
       - name: Build Release APK
         run: |
           cd src-tauri/gen/android
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      # THE FIX: Look for ANY apk file using '**'
+      # 5. Upload Results
       - name: Upload Ultra-Light Android APK
         uses: actions/upload-artifact@v4
         with:
